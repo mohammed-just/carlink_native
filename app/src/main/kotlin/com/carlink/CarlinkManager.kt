@@ -79,7 +79,9 @@ class CarlinkManager(
     initialConfig: AdapterConfig = AdapterConfig.DEFAULT,
 ) {
     init {
-        NavigationStateManager.initialize(context.applicationContext)
+        if (BuildConfig.MODERN_CLUSTER_STACK_ENABLED) {
+            NavigationStateManager.initialize(context.applicationContext)
+        }
     }
 
     // Config can be updated when actual surface dimensions are known
@@ -1737,7 +1739,10 @@ class CarlinkManager(
     private fun processMediaMetadata(message: MediaDataMessage) {
         // Route NaviJSON to NavigationStateManager for cluster display (only if enabled)
         if (message.type == MediaType.NAVI_JSON) {
-            if (AdapterConfigPreference.getInstance(context).getClusterNavigationSync()) {
+            if (
+                BuildConfig.MODERN_CLUSTER_STACK_ENABLED &&
+                AdapterConfigPreference.getInstance(context).getClusterNavigationSync()
+            ) {
                 NavigationStateManager.onNaviJson(message.payload)
             }
             return
@@ -1745,7 +1750,10 @@ class CarlinkManager(
 
         // Route AA maneuver icons to NavigationStateManager (sub-type 201)
         if (message.type == MediaType.NAVI_IMAGE) {
-            if (AdapterConfigPreference.getInstance(context).getClusterNavigationSync()) {
+            if (
+                BuildConfig.MODERN_CLUSTER_STACK_ENABLED &&
+                AdapterConfigPreference.getInstance(context).getClusterNavigationSync()
+            ) {
                 val imageData = message.payload["NaviImage"] as? ByteArray
                 if (imageData != null) {
                     NavigationStateManager.onNaviImage(imageData)

@@ -15,6 +15,7 @@ import androidx.media.MediaBrowserServiceCompat
 import com.carlink.BuildConfig
 import com.carlink.MainActivity
 import com.carlink.R
+import com.carlink.util.PendingIntentFlagsCompat
 
 private const val TAG = "CARLINK_BROWSER"
 
@@ -270,7 +271,7 @@ class CarlinkMediaBrowserService : MediaBrowserServiceCompat() {
                 Intent(this, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
                 },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                PendingIntentFlagsCompat.immutableUpdateCurrent(),
             )
 
         val builder =

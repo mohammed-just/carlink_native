@@ -81,6 +81,7 @@ import com.carlink.CarlinkManager
 import com.carlink.logging.FileLogManager
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
+import com.carlink.platform.PlatformCapabilities
 import com.carlink.ui.components.LoadingSpinner
 import com.carlink.ui.settings.AdapterConfigPreference
 import com.carlink.ui.settings.AdapterConfigurationDialog
@@ -97,6 +98,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     carlinkManager: CarlinkManager,
     fileLogManager: FileLogManager?,
+    platformCapabilities: PlatformCapabilities,
     onNavigateBack: () -> Unit,
     onResetCluster: () -> Unit,
 ) {
@@ -219,7 +221,12 @@ fun SettingsScreen(
                         .weight(1f),
             ) {
                 when (selectedTab) {
-                    SettingsTab.CONTROL -> ControlTabContent(carlinkManager, onResetCluster)
+                    SettingsTab.CONTROL ->
+                        ControlTabContent(
+                            carlinkManager = carlinkManager,
+                            platformCapabilities = platformCapabilities,
+                            onResetCluster = onResetCluster,
+                        )
                     SettingsTab.HOME -> HomeTabContent()
                     SettingsTab.LOGS -> LogsTabContent(context, fileLogManager)
                 }
@@ -236,6 +243,7 @@ private enum class ButtonSeverity {
 @Composable
 private fun ControlTabContent(
     carlinkManager: CarlinkManager,
+    platformCapabilities: PlatformCapabilities,
     onResetCluster: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -243,7 +251,7 @@ private fun ControlTabContent(
     val colorScheme = MaterialTheme.colorScheme
     var isProcessing by remember { mutableStateOf(false) }
     var showResetClusterDialog by remember { mutableStateOf(false) }
-    var showClusterNavOffDialog by remember { mutableStateOf(false) }
+    var showClusterInfoDialog by remember { mutableStateOf(false) }
     val isDeviceConnected = carlinkManager.state != CarlinkManager.State.DISCONNECTED
 
     val displayModePreference = remember { DisplayModePreference.getInstance(context) }
@@ -254,7 +262,9 @@ private fun ControlTabContent(
 
     val adapterConfigPreference = remember { AdapterConfigPreference.getInstance(context) }
     var showAdapterConfigDialog by remember { mutableStateOf(false) }
-    val clusterNavigationEnabled = remember { adapterConfigPreference.getClusterNavigationSync() }
+    val clusterNavigationEnabled by adapterConfigPreference.clusterNavigationFlow.collectAsStateWithLifecycle(
+        initialValue = adapterConfigPreference.getClusterNavigationSync(),
+    )
 
     val windowInfo = LocalWindowInfo.current
     val density = LocalDensity.current
@@ -390,10 +400,12 @@ private fun ControlTabContent(
                             enabled = !isProcessing,
                             isProcessing = isProcessing,
                             onClick = {
-                                if (clusterNavigationEnabled) {
+                                if (!platformCapabilities.canResetCluster) {
+                                    showClusterInfoDialog = true
+                                } else if (clusterNavigationEnabled) {
                                     showResetClusterDialog = true
                                 } else {
-                                    showClusterNavOffDialog = true
+                                    showClusterInfoDialog = true
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -459,10 +471,26 @@ private fun ControlTabContent(
         )
     }
 
-    // Cluster Navigation Off Info Dialog
-    if (showClusterNavOffDialog) {
+    if (showClusterInfoDialog) {
+        val dialogTitle =
+            if (!platformCapabilities.canResetCluster) {
+                if (platformCapabilities.showsExperimentalClusterPath) {
+                    "Experimental Cluster Path"
+                } else {
+                    "Cluster Unavailable"
+                }
+            } else {
+                "Cluster Navigation Off"
+            }
+        val dialogMessage =
+            if (!platformCapabilities.canResetCluster) {
+                platformCapabilities.clusterStatusMessage
+            } else {
+                "Cluster Navigation is disabled. Enable it in Adapter Configuration to use this feature."
+            }
+
         AlertDialog(
-            onDismissRequest = { showClusterNavOffDialog = false },
+            onDismissRequest = { showClusterInfoDialog = false },
             icon = {
                 Icon(
                     imageVector = Icons.Default.Speed,
@@ -470,12 +498,12 @@ private fun ControlTabContent(
                     tint = colorScheme.onSurfaceVariant,
                 )
             },
-            title = { Text("Cluster Navigation Off") },
+            title = { Text(dialogTitle) },
             text = {
-                Text("Cluster Navigation is disabled. Enable it in Adapter Configuration to use this feature.")
+                Text(dialogMessage)
             },
             confirmButton = {
-                TextButton(onClick = { showClusterNavOffDialog = false }) {
+                TextButton(onClick = { showClusterInfoDialog = false }) {
                     Text("OK")
                 }
             },
@@ -488,6 +516,7 @@ private fun ControlTabContent(
             adapterConfigPreference = adapterConfigPreference,
             carlinkManager = carlinkManager,
             currentDisplayMode = currentDisplayMode,
+            platformCapabilities = platformCapabilities,
             onDismiss = { showAdapterConfigDialog = false },
         )
     }

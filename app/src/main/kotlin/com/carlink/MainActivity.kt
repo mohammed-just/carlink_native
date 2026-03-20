@@ -38,6 +38,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.carlink.cluster.ClusterBridge
 import com.carlink.cluster.ClusterBindingState
 import com.carlink.logging.FileLogManager
 import com.carlink.logging.LogPreset
@@ -47,6 +48,8 @@ import com.carlink.logging.apply
 import com.carlink.logging.logInfo
 import com.carlink.logging.logWarn
 import com.carlink.navigation.NavigationStateManager
+import com.carlink.platform.DisplayBoundsProvider
+import com.carlink.platform.PlatformCapabilities
 import com.carlink.protocol.AdapterConfig
 import com.carlink.protocol.KnownDevices
 import com.carlink.ui.MainScreen
@@ -78,6 +81,8 @@ class MainActivity : ComponentActivity() {
     private var carlinkManager: CarlinkManager? = null
     private var fileLogManager: FileLogManager? = null
     private var currentDisplayMode: DisplayMode = DisplayMode.SYSTEM_UI_VISIBLE
+    private lateinit var platformCapabilities: PlatformCapabilities
+    private lateinit var clusterBridge: ClusterBridge
 
     // Permission launchers — chained: mic callback triggers location request
     private val locationPermissionLauncher =
@@ -148,8 +153,17 @@ class MainActivity : ComponentActivity() {
         // Initialize logging
         initializeLogging()
 
-        // Apply cluster service component state before Templates Host discovers it
-        AdapterConfigPreference.getInstance(this).applyClusterComponentState(this)
+        platformCapabilities = PlatformCapabilities.detect(this)
+        clusterBridge = ClusterBridge.create(platformCapabilities)
+        logInfo(
+            "[PLATFORM] Startup flavor=${platformCapabilities.buildPlatform}, " +
+                "cluster=${platformCapabilities.clusterEnvironment}, " +
+                "platform=${platformCapabilities.platformInfo}",
+            tag = "MAIN",
+        )
+
+        // Apply cluster service component state before any host discovery happens
+        clusterBridge.applyComponentState(this)
 
         // Load display mode preference and apply BEFORE calculating display dimensions
         // This ensures correct viewport sizing - fullscreen immersive uses full screen (1920x1080),
@@ -169,14 +183,7 @@ class MainActivity : ComponentActivity() {
         // Launch CarAppActivity to trigger Templates Host → cluster binding chain.
         // Skipped entirely when cluster navigation is disabled — no reason to start
         // the CarAppActivity → RendererService → CarlinkClusterService chain.
-        if (AdapterConfigPreference.getInstance(this).getClusterNavigationSync()) {
-            // Delayed to avoid interrupting USB permission dialog on first connect.
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (!isDestroyed && !isFinishing) {
-                    launchCarAppActivity()
-                }
-            }, 4000)
-        }
+        clusterBridge.scheduleInitialLaunch(this)
 
         // Set up Compose UI
         // carlinkManager is guaranteed non-null here since initializeCarlinkManager()
@@ -189,7 +196,8 @@ class MainActivity : ComponentActivity() {
                         carlinkManager = manager,
                         fileLogManager = fileLogManager,
                         displayMode = currentDisplayMode,
-                        onResetCluster = ::restartClusterBinding,
+                        platformCapabilities = platformCapabilities,
+                        onResetCluster = { clusterBridge.restart(this) },
                     )
                 }
             }
@@ -232,7 +240,7 @@ class MainActivity : ComponentActivity() {
             // Only launch cluster binding if cluster navigation is enabled
             if (AdapterConfigPreference.getInstance(this).getClusterNavigationSync()) {
                 logInfo("[LIFECYCLE] onNewIntent: USB_DEVICE_ATTACHED — re-launching cluster binding", tag = "MAIN")
-                launchCarAppActivity()
+                clusterBridge.onUsbAttached(this)
             }
 
             // Auto-connect when adapter re-enumerates (e.g., after reboot or replug)
@@ -302,84 +310,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initializeCarlinkManager() {
-        // Get window metrics to determine USABLE area (excluding system UI)
-        // Using WindowMetrics API (minSdk 32 guarantees API 30+ availability)
-        val windowMetrics = windowManager.currentWindowMetrics
-        val bounds = windowMetrics.bounds
-        val windowInsets = windowMetrics.windowInsets
-
-        // Separate inset sources for per-mode SafeArea computation
-        val systemBarInsets =
-            windowInsets.getInsetsIgnoringVisibility(
-                android.view.WindowInsets.Type
-                    .systemBars(),
-            )
-        val cutoutInsets =
-            windowInsets.getInsetsIgnoringVisibility(
-                android.view.WindowInsets.Type
-                    .displayCutout(),
-            )
-
-        // Compute video resolution and SafeArea insets per display mode
-        val videoWidth: Int
-        val videoHeight: Int
-        val safeInsetTop: Int
-        val safeInsetBottom: Int
-        val safeInsetLeft: Int
-        val safeInsetRight: Int
-
-        when (currentDisplayMode) {
-            DisplayMode.SYSTEM_UI_VISIBLE -> {
-                // System bars + cutouts both reduce video area. No SafeArea needed.
-                videoWidth = bounds.width() - systemBarInsets.left - systemBarInsets.right -
-                    cutoutInsets.left - cutoutInsets.right
-                videoHeight = bounds.height() - systemBarInsets.top - systemBarInsets.bottom -
-                    cutoutInsets.top - cutoutInsets.bottom
-                safeInsetTop = 0
-                safeInsetBottom = 0
-                safeInsetLeft = 0
-                safeInsetRight = 0
-            }
-
-            DisplayMode.STATUS_BAR_HIDDEN -> {
-                // Nav bar visible (subtract from video), status bar hidden (cutout exposed top/sides)
-                videoWidth = bounds.width() - systemBarInsets.left - systemBarInsets.right
-                videoHeight = bounds.height() - systemBarInsets.bottom
-                safeInsetTop = cutoutInsets.top
-                safeInsetBottom = 0 // nav bar covers bottom
-                safeInsetLeft = cutoutInsets.left
-                safeInsetRight = cutoutInsets.right
-            }
-
-            DisplayMode.NAV_BAR_HIDDEN -> {
-                // Status bar visible (subtract from video), nav bar hidden (cutout exposed bottom/sides)
-                videoWidth = bounds.width()
-                videoHeight = bounds.height() - systemBarInsets.top
-                safeInsetTop = 0 // status bar covers top
-                safeInsetBottom = cutoutInsets.bottom
-                safeInsetLeft = cutoutInsets.left
-                safeInsetRight = cutoutInsets.right
-            }
-
-            DisplayMode.FULLSCREEN_IMMERSIVE -> {
-                // Full screen, all cutout areas exposed
-                videoWidth = bounds.width()
-                videoHeight = bounds.height()
-                safeInsetTop = cutoutInsets.top
-                safeInsetBottom = cutoutInsets.bottom
-                safeInsetLeft = cutoutInsets.left
-                safeInsetRight = cutoutInsets.right
-            }
-        }
+        val projectionLayout = DisplayBoundsProvider.projectionLayout(this, currentDisplayMode)
+        val systemBarInsets = projectionLayout.systemBarInsets
+        val cutoutInsets = projectionLayout.cutoutInsets
+        val safeInsets = projectionLayout.safeInsets
 
         // Get DPI and refresh rate from display metrics
         val displayMetrics = resources.displayMetrics
         val dpi = displayMetrics.densityDpi
-        val refreshRate = display?.refreshRate?.toInt() ?: 60
+        val refreshRate = DisplayBoundsProvider.refreshRate(this)
 
         // Round to even numbers for H.264 compatibility
-        val evenWidth = videoWidth and 1.inv()
-        val evenHeight = videoHeight and 1.inv()
+        val evenWidth = projectionLayout.videoWidth.coerceAtLeast(2) and 1.inv()
+        val evenHeight = projectionLayout.videoHeight.coerceAtLeast(2) and 1.inv()
 
         // Load icons from assets for adapter initialization
         val (icon120, icon180, icon256) = IconAssets.loadIcons(this)
@@ -388,6 +331,12 @@ class MainActivity : ComponentActivity() {
         // Load user-configured adapter settings from sync cache (instant, no I/O blocking)
         // These are optional - only configured settings are sent to the adapter
         val userConfig = AdapterConfigPreference.getInstance(this).getUserConfigSync()
+        val adapterSampleRate =
+            if (platformCapabilities.platformInfo.requiresT7ConservativeProfile()) {
+                platformCapabilities.platformInfo.nativeSampleRate.takeIf { it > 0 } ?: 48000
+            } else {
+                48000
+            }
 
         // Apply video resolution preference (must be before ViewArea/SafeArea construction)
         // AUTO = use detected usable dimensions, otherwise use user-selected resolution
@@ -407,18 +356,25 @@ class MainActivity : ComponentActivity() {
         val safeAreaData =
             if (userSelectedResolution) {
                 // Scale cutout insets from display coordinates to custom resolution coordinates
-                val scaleX = configWidth.toFloat() / evenWidth.toFloat()
-                val scaleY = configHeight.toFloat() / evenHeight.toFloat()
+                val scaleX = configWidth.toFloat() / evenWidth.coerceAtLeast(1).toFloat()
+                val scaleY = configHeight.toFloat() / evenHeight.coerceAtLeast(1).toFloat()
                 buildSafeAreaData(
                     configWidth,
                     configHeight,
-                    (safeInsetTop * scaleY).toInt(),
-                    (safeInsetBottom * scaleY).toInt(),
-                    (safeInsetLeft * scaleX).toInt(),
-                    (safeInsetRight * scaleX).toInt(),
+                    (safeInsets.top * scaleY).toInt(),
+                    (safeInsets.bottom * scaleY).toInt(),
+                    (safeInsets.left * scaleX).toInt(),
+                    (safeInsets.right * scaleX).toInt(),
                 )
             } else {
-                buildSafeAreaData(configWidth, configHeight, safeInsetTop, safeInsetBottom, safeInsetLeft, safeInsetRight)
+                buildSafeAreaData(
+                    configWidth,
+                    configHeight,
+                    safeInsets.top,
+                    safeInsets.bottom,
+                    safeInsets.left,
+                    safeInsets.right,
+                )
             }
 
         // Map user config enums to AdapterConfig values
@@ -446,8 +402,7 @@ class MainActivity : ComponentActivity() {
                 icon256Data = icon256,
                 // User-configured audio transfer mode (false=adapter, true=bluetooth)
                 audioTransferMode = userConfig.audioTransferMode,
-                // Hardcoded to 48kHz - professional quality audio for GM AAOS
-                sampleRate = 48000,
+                sampleRate = adapterSampleRate,
                 // User-configured mic, wifi, call quality, and media delay
                 micType = micType,
                 wifiType = wifiType,
@@ -456,16 +411,20 @@ class MainActivity : ComponentActivity() {
                 viewAreaData = viewAreaData,
                 safeAreaData = safeAreaData,
                 gpsForwarding = userConfig.gpsForwarding,
-                nativeDisplayWidth = bounds.width(),
-                nativeDisplayHeight = bounds.height(),
+                nativeDisplayWidth = projectionLayout.nativeWidth,
+                nativeDisplayHeight = projectionLayout.nativeHeight,
             )
 
         logInfo(
-            "[WINDOW] Bounds: ${bounds.width()}x${bounds.height()}, " +
+            "[WINDOW] Native: ${projectionLayout.nativeWidth}x${projectionLayout.nativeHeight}, " +
                 "Video: ${evenWidth}x$evenHeight, " +
+                "SystemBars: T:${systemBarInsets.top} B:${systemBarInsets.bottom} " +
+                "L:${systemBarInsets.left} R:${systemBarInsets.right}, " +
                 "Cutout: T:${cutoutInsets.top} B:${cutoutInsets.bottom} " +
                 "L:${cutoutInsets.left} R:${cutoutInsets.right}, " +
-                "DisplayMode: ${currentDisplayMode.name}",
+                "SafeArea: T:${safeInsets.top} B:${safeInsets.bottom} " +
+                "L:${safeInsets.left} R:${safeInsets.right}, " +
+                "Refresh=${refreshRate}Hz, mode=${currentDisplayMode.name}",
             tag = "MAIN",
         )
         logInfo("Display config: ${config.width}x${config.height}@${config.fps}fps, ${config.dpi}dpi", tag = "MAIN")
@@ -478,7 +437,7 @@ class MainActivity : ComponentActivity() {
         logInfo(
             "[ADAPTER_CONFIG] User config: " +
                 "audioTransferMode=${if (userConfig.audioTransferMode) "bluetooth" else "adapter"}, " +
-                "sampleRate=48000Hz (hardcoded), mic=$micType, wifi=$wifiType, " +
+                "sampleRate=${adapterSampleRate}Hz, mic=$micType, wifi=$wifiType, " +
                 "callQuality=${userConfig.callQuality.name}, " +
                 "mediaDelay=${userConfig.mediaDelay.name}(${userConfig.mediaDelay.delayMs}ms), " +
                 "resolution=${userConfig.videoResolution.toStorageString()} (adapter: ${configWidth}x$configHeight)",
@@ -737,6 +696,7 @@ fun CarlinkApp(
     carlinkManager: CarlinkManager,
     fileLogManager: FileLogManager?,
     displayMode: DisplayMode,
+    platformCapabilities: PlatformCapabilities,
     onResetCluster: () -> Unit,
 ) {
     var showSettings by remember { mutableStateOf(false) }
@@ -781,6 +741,7 @@ fun CarlinkApp(
             SettingsScreen(
                 carlinkManager = carlinkManager,
                 fileLogManager = fileLogManager,
+                platformCapabilities = platformCapabilities,
                 onNavigateBack = {
                     logInfo("[UI_NAV] Closing SettingsScreen overlay", tag = "UI")
                     showSettings = false

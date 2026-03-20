@@ -2,7 +2,7 @@
 .DS_Store
 **/.DS_Store
 ._*
-
+/system/
 # Local properties (machine-specific SDK paths - auto-generated)
 **/local.properties
 local.properties
@@ -36,6 +36,7 @@ signing.properties
 
 # Gradle caches
 .gradle/
+.gradle-local/
 
 # IDE and tooling caches
 **/.gradle/

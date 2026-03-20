@@ -1,12 +1,14 @@
 package com.carlink.platform
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.os.Build
 import android.util.Log
-import android.view.WindowManager
 import com.carlink.BuildConfig
+import java.util.Locale
 
 /**
  * PlatformDetector - Detects hardware platform characteristics for configuration selection.
@@ -43,6 +45,8 @@ object PlatformDetector {
      * @property product Device product string
      * @property device Device name string
      * @property isBroxton True if device is Intel Broxton/Apollo Lake platform (gminfo37)
+     * @property isAllwinnerT7 True if device matches the Android 9 Allwinner T7/S311 family
+     * @property isLegacyAutomotive True if device exposes automotive features on a pre-Android 10 build
      * @property displayWidth Native display width in pixels (0 if unknown)
      * @property displayHeight Native display height in pixels (0 if unknown)
      */
@@ -57,6 +61,8 @@ object PlatformDetector {
         val product: String,
         val device: String,
         val isBroxton: Boolean = false,
+        val isAllwinnerT7: Boolean = false,
+        val isLegacyAutomotive: Boolean = false,
         val displayWidth: Int = 0,
         val displayHeight: Int = 0,
     ) {
@@ -80,8 +86,11 @@ object PlatformDetector {
          */
         fun requiresGmAaosAudioFixes(): Boolean = isIntel && isGmAaos
 
+        /** Conservative profile for legacy Allwinner T7/S311 Android 9 automotive hosts. */
+        fun requiresT7ConservativeProfile(): Boolean = isAllwinnerT7
+
         override fun toString(): String =
-            "PlatformInfo(arch=$cpuArch, intel=$isIntel, gm=$isGmAaos, " +
+            "PlatformInfo(arch=$cpuArch, intel=$isIntel, gm=$isGmAaos, t7=$isAllwinnerT7, " +
                 "hwDecoder=${hardwareH264DecoderName ?: "software"}, " +
                 "nativeRate=${nativeSampleRate}Hz, mfr=$manufacturer, product=$product, device=$device)"
     }
@@ -97,15 +106,21 @@ object PlatformDetector {
         val isIntel = cpuArch == "x86_64" || cpuArch == "x86"
 
         val manufacturer = Build.MANUFACTURER ?: ""
+        val brand = Build.BRAND ?: ""
+        val model = Build.MODEL ?: ""
         val product = Build.PRODUCT ?: ""
         val device = Build.DEVICE ?: ""
         val board = Build.BOARD ?: ""
         val hardware = Build.HARDWARE ?: ""
 
         val isGmAaos = detectGmAaos(manufacturer, product, device)
+        val isAllwinnerT7 = detectAllwinnerT7(manufacturer, brand, model, product, device, board, hardware)
         val (_, hardwareH264DecoderName) = detectHardwareH264Decoder()
         val hasIntelCodec = hardwareH264DecoderName?.contains("Intel", ignoreCase = true) == true
         val nativeSampleRate = detectNativeSampleRate(context)
+        val isLegacyAutomotive =
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)
 
         // Detect Intel Broxton/Apollo Lake platform (used in gminfo37)
         // Broxton uses Intel Atom x7 (Apollo Lake) with HD Graphics 505
@@ -129,6 +144,8 @@ object PlatformDetector {
                 product = product,
                 device = device,
                 isBroxton = isBroxton,
+                isAllwinnerT7 = isAllwinnerT7,
+                isLegacyAutomotive = isLegacyAutomotive,
                 displayWidth = displayWidth,
                 displayHeight = displayHeight,
             )
@@ -138,6 +155,7 @@ object PlatformDetector {
             Log.i(TAG, "[PLATFORM] Hardware H.264 decoder: ${hardwareH264DecoderName ?: "none (software fallback)"}")
             Log.i(TAG, "[PLATFORM] Intel-specific fixes: ${info.requiresIntelMediaCodecFixes()}")
             Log.i(TAG, "[PLATFORM] GM AAOS audio fixes: ${info.requiresGmAaosAudioFixes()}")
+            Log.i(TAG, "[PLATFORM] Allwinner T7 profile: ${info.requiresT7ConservativeProfile()}")
             Log.i(TAG, "[PLATFORM] Broxton platform: $isBroxton, Display: ${displayWidth}x$displayHeight")
         }
 
@@ -152,14 +170,7 @@ object PlatformDetector {
      */
     private fun detectDisplayResolution(context: Context): Pair<Int, Int> =
         try {
-            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-            if (windowManager != null) {
-                // minSdk 32 >= API 30 (R), so currentWindowMetrics is always available
-                val bounds = windowManager.currentWindowMetrics.bounds
-                Pair(bounds.width(), bounds.height())
-            } else {
-                Pair(0, 0)
-            }
+            DisplayBoundsProvider.nativeDisplaySize(context)
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to detect display resolution: ${e.message}")
             Pair(0, 0)
@@ -195,6 +206,25 @@ object PlatformDetector {
             product.contains("gminfo", ignoreCase = true) ||
             device.startsWith("gminfo", ignoreCase = true)
 
+    private fun detectAllwinnerT7(
+        manufacturer: String,
+        brand: String,
+        model: String,
+        product: String,
+        device: String,
+        board: String,
+        hardware: String,
+    ): Boolean =
+        manufacturer.equals("Allwinner", ignoreCase = true) ||
+            brand.equals("Allwinner", ignoreCase = true) ||
+            model.contains("T7", ignoreCase = true) ||
+            product.contains("t7", ignoreCase = true) ||
+            product.contains("s311", ignoreCase = true) ||
+            device.contains("t7", ignoreCase = true) ||
+            device.contains("s311", ignoreCase = true) ||
+            board.contains("t7", ignoreCase = true) ||
+            hardware.contains("sun8i", ignoreCase = true)
+
     /**
      * Detect the best available hardware H.264 decoder.
      *
@@ -206,7 +236,7 @@ object PlatformDetector {
             val hwDecoder =
                 codecList.codecInfos.firstOrNull { info ->
                     !info.isEncoder &&
-                        info.isHardwareAccelerated &&
+                        isHardwareCodec(info) &&
                         info.supportedTypes.any { type ->
                             type.equals("video/avc", ignoreCase = true)
                         }
@@ -221,6 +251,18 @@ object PlatformDetector {
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to detect hardware codec: ${e.message}")
             Pair(false, null)
+        }
+
+    private fun isHardwareCodec(info: MediaCodecInfo): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            info.isHardwareAccelerated
+        } else {
+            val codecName = info.name.lowercase(Locale.US)
+            !codecName.startsWith("omx.google.") &&
+                !codecName.startsWith("c2.android.") &&
+                !codecName.startsWith("c2.google.") &&
+                !codecName.contains("sw") &&
+                !codecName.contains("software")
         }
 
     /**

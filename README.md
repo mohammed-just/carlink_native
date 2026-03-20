@@ -8,6 +8,20 @@ I did this app for me and my use, but sharing so others can use it. Don't expect
 - For AAOS 12 and higher
 - For (Carlinkit CPC200-CCPA)[https://www.carlinkit.com/ccpa] on firmware 2025.10
 
+### Build Variants
+
+- `modernAaos`: the existing Android 12+ / GM-focused path
+- `t7Api28`: experimental Android 9 / Allwinner T7 compatibility build
+
+### Build Notes
+
+- Windows CLI builds are supported with `.\gradlew.bat`
+- Android Studio import is the recommended Windows workflow
+- Example commands:
+  - `.\gradlew.bat :app:assembleModernAaosDebug`
+  - `.\gradlew.bat :app:assembleT7Api28Debug`
+- T7 cluster support is not enabled in the normal APK; treat it as experimental until the head unit proves it can grant the needed legacy permissions
+
 
 ## [XDA Developer Forums](https://xdaforums.com/t/carlink.4774308/)
 
@@ -102,6 +116,9 @@ I, or mostly CLAUDE, have tried to collect and organize as much documentation as
 > I cannot speak for all information to be accurate and free of errors, but its the most detailed and centralized source of information you will likely find anywhere else. Unless you have direct access to the source code of the Adapter itself, GM Radios etc... If you do, i know a guy and a site who will glady take it and publish it anonymously. 
 
 Most of your questions are likly answered in [Carlink Documents](/documents/reference/), but reach out on the XDA Forum. Issues use github to report it or the forum as well.
+
+For the Android 9 / Allwinner T7 port specifically, see [Android 9 T7 Port Notes](/documents/reference/t7_android9_port.md).
+For step-by-step APK deployment, see [T7 APK Install Guide](/documents/reference/t7_install_guide.md).
 
 # Other Repos that started this gravy train, provided insights/inspiration. And Helped a lot.
 # Check them out

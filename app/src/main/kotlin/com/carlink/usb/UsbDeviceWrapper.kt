@@ -15,6 +15,7 @@ import com.carlink.logging.Logger
 import com.carlink.logging.logDebug
 import com.carlink.logging.logWarn
 import com.carlink.protocol.KnownDevices
+import com.carlink.util.PendingIntentFlagsCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
@@ -132,7 +133,7 @@ class UsbDeviceWrapper(
                         context,
                         0,
                         Intent(ACTION_USB_PERMISSION).apply { setPackage(context.packageName) },
-                        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                        PendingIntentFlagsCompat.mutableUpdateCurrent(),
                     )
                 usbManager.requestPermission(device, pendingIntent)
 

@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "zeno.carlink"
-        minSdk = 32
+        minSdk = 28
         targetSdk = 36
         versionCode = 96
         versionName = "1.0.0"
@@ -26,6 +26,29 @@ android {
 
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    flavorDimensions += "platform"
+
+    productFlavors {
+        create("modernAaos") {
+            dimension = "platform"
+            minSdk = 32
+            buildConfigField("String", "PLATFORM_FLAVOR", "\"modernAaos\"")
+            buildConfigField("boolean", "MODERN_CLUSTER_STACK_ENABLED", "true")
+            buildConfigField("boolean", "EXPERIMENTAL_LEGACY_CLUSTER_ENABLED", "false")
+            manifestPlaceholders["carlinkForegroundServiceType"] = "mediaPlayback|connectedDevice"
+        }
+
+        create("t7Api28") {
+            dimension = "platform"
+            minSdk = 28
+            versionNameSuffix = "-t7"
+            buildConfigField("String", "PLATFORM_FLAVOR", "\"t7Api28\"")
+            buildConfigField("boolean", "MODERN_CLUSTER_STACK_ENABLED", "false")
+            buildConfigField("boolean", "EXPERIMENTAL_LEGACY_CLUSTER_ENABLED", "true")
+            manifestPlaceholders["carlinkForegroundServiceType"] = "mediaPlayback"
         }
     }
 
@@ -96,7 +119,7 @@ dependencies {
 
     // Car App Library for AAOS cluster navigation (Templates Host)
     implementation("androidx.car.app:app:1.7.0")
-    implementation("androidx.car.app:app-automotive:1.7.0")
+    add("modernAaosImplementation", "androidx.car.app:app-automotive:1.7.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

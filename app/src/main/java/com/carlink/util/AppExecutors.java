@@ -11,11 +11,10 @@ package com.carlink.util;
    * - mediaCodec1: Multi-threaded pool for H.264 decode pipeline
    *
    * OPTIMIZATION:
-   * MediaCodec thread pool is tuned for the GM Infotainment (IOK) hardware:
-   * - Intel Atom x7-A3960 quad-core processor
-   * - Dynamic scaling: 2 core threads, up to 4 max threads
+   * MediaCodec thread pool is sized dynamically at runtime:
+   * - Uses available processor count instead of a single target platform
    * - THREAD_PRIORITY_DISPLAY for low-latency video rendering
-   * - 128-task queue sized for 6GB RAM environment
+   * - Queue depth scales with CPU count to stay conservative on Android 9/T7 hosts
    */
 import android.os.Process;
 
@@ -28,7 +27,7 @@ import java.util.concurrent.TimeUnit;
 
 public class AppExecutors
 {
-    // Optimized thread pool for Intel Atom x7-A3960 quad-core
+    // Optimized thread pool for the current device at runtime
     private static class OptimizedMediaCodecExecutor implements Executor {
         private final ThreadPoolExecutor executor;
         private final int androidPriority;
@@ -37,17 +36,17 @@ public class AppExecutors
         private final ThreadLocal<Boolean> prioritySet = ThreadLocal.withInitial(() -> false);
 
         private OptimizedMediaCodecExecutor(String executorName, int androidPriority) {
-            // Get available CPU cores for Intel Atom x7-A3960 (should be 4)
             int numberOfCores = Runtime.getRuntime().availableProcessors();
+            int queueCapacity = Math.max(32, numberOfCores * 32);
 
             // Create optimized thread pool based on Android best practices
-            // Core pool: half cores, Max pool: all cores to utilize quad-core efficiently
+            // Core pool: half cores, Max pool: all cores for burst recovery after frame drops
             this.executor = new ThreadPoolExecutor(
                     Math.max(1, numberOfCores / 2), // corePoolSize - utilize half cores initially
                     numberOfCores, // maximumPoolSize - can scale to all cores under load
                     60L, // keepAliveTime - standard Android recommendation
                     TimeUnit.SECONDS,
-                    new LinkedBlockingQueue<>(128), // Larger queue for 6GB RAM system
+                    new LinkedBlockingQueue<>(queueCapacity),
                     r -> {
                         Thread t = new Thread(r, executorName);
                         return t;
@@ -79,7 +78,7 @@ public class AppExecutors
     public AppExecutors()
     {
         // MediaCodec executor optimized according to Android MediaCodec best practices
-        mediaCodec1 = new OptimizedMediaCodecExecutor("MediaCodec-Input", Process.THREAD_PRIORITY_DISPLAY);
+        mediaCodec1 = new OptimizedMediaCodecExecutor("MediaCodec", Process.THREAD_PRIORITY_DISPLAY);
     }
 
     public Executor mediaCodec1() {

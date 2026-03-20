@@ -10,6 +10,7 @@ import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
 import com.carlink.BuildConfig
 import com.carlink.MainActivity
+import com.carlink.util.PendingIntentFlagsCompat
 import com.carlink.util.LogCallback
 
 private const val TAG = "CARLINK_MEDIA"
@@ -122,7 +123,7 @@ class MediaSessionManager(
                             Intent(context, MainActivity::class.java).apply {
                                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
                             },
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                            PendingIntentFlagsCompat.immutableUpdateCurrent(),
                         ),
                     )
 

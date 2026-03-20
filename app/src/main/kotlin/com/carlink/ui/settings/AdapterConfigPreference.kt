@@ -639,19 +639,27 @@ class AdapterConfigPreference private constructor(
      * Apply the cluster service component enabled/disabled state based on preference.
      * Call this early in Activity.onCreate() so the state is set before Templates Host discovers it.
      */
-    fun applyClusterComponentState(context: Context) {
-        val enabled = getClusterNavigationSync()
+    fun applyClusterComponentState(
+        context: Context,
+        componentAvailable: Boolean = true,
+    ) {
+        val enabled = componentAvailable && getClusterNavigationSync()
         val newState =
             if (enabled) {
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             } else {
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             }
-        context.packageManager.setComponentEnabledSetting(
-            ComponentName(context, "com.carlink.cluster.CarlinkClusterService"),
-            newState,
-            PackageManager.DONT_KILL_APP,
-        )
+        try {
+            context.packageManager.setComponentEnabledSetting(
+                ComponentName(context, "com.carlink.cluster.CarlinkClusterService"),
+                newState,
+                PackageManager.DONT_KILL_APP,
+            )
+            logInfo("Cluster component state applied: enabled=$enabled available=$componentAvailable", tag = "AdapterConfig")
+        } catch (e: IllegalArgumentException) {
+            logInfo("Cluster component not present in this flavor: ${e.message}", tag = "AdapterConfig")
+        }
     }
 
     data class UserConfig(

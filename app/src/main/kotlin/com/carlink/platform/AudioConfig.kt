@@ -18,6 +18,7 @@ import android.media.AudioTrack
  * CONFIGURATION SELECTION:
  * - DEFAULT: Standard settings for ARM platforms
  * - GM_AAOS: Optimized for Intel GM AAOS (48kHz, larger buffers, no LOW_LATENCY)
+ * - T7_API28: Conservative buffers for Allwinner T7 / Android 9 automotive hosts
  *
  * Reference:
  * - https://source.android.com/docs/core/audio/latency/design
@@ -60,6 +61,17 @@ data class AudioConfig(
                 navBufferCapacityMs = 300,
             )
 
+        /** Allwinner T7 / API 28. Conservative buffers to absorb platform and USB jitter. */
+        val T7_API28 =
+            AudioConfig(
+                sampleRate = 48000,
+                bufferMultiplier = 5,
+                performanceMode = AudioTrack.PERFORMANCE_MODE_NONE,
+                prefillThresholdMs = 120,
+                mediaBufferCapacityMs = 1250,
+                navBufferCapacityMs = 500,
+            )
+
         /**
          * Select config based on platform. GM AAOS audio fixes require BOTH:
          * (1) Intel x86/x86_64 architecture, (2) GM AAOS device.
@@ -73,6 +85,10 @@ data class AudioConfig(
             return when {
                 platformInfo.requiresGmAaosAudioFixes() -> {
                     GM_AAOS.copy(sampleRate = effectiveSampleRate)
+                }
+
+                platformInfo.requiresT7ConservativeProfile() -> {
+                    T7_API28.copy(sampleRate = effectiveSampleRate)
                 }
 
                 platformInfo.requiresIntelMediaCodecFixes() -> {

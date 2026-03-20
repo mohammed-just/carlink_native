@@ -72,6 +72,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carlink.CarlinkManager
 import com.carlink.logging.logWarn
+import com.carlink.platform.DisplayBoundsProvider
+import com.carlink.platform.PlatformCapabilities
 import com.carlink.ui.theme.AutomotiveDimens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -93,6 +95,7 @@ fun AdapterConfigurationDialog(
     adapterConfigPreference: AdapterConfigPreference,
     carlinkManager: CarlinkManager?,
     currentDisplayMode: DisplayMode,
+    platformCapabilities: PlatformCapabilities,
     onDismiss: () -> Unit,
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -135,56 +138,9 @@ fun AdapterConfigurationDialog(
     // Other modes: Subtract system bar insets from bounds
     val context = LocalContext.current
     val activity = context as? ComponentActivity
-    val windowManager = activity?.windowManager
     val (usableWidth, usableHeight) =
-        if (windowManager != null) {
-            val windowMetrics = windowManager.currentWindowMetrics
-            val bounds = windowMetrics.bounds
-
-            when (currentDisplayMode) {
-                DisplayMode.FULLSCREEN_IMMERSIVE -> {
-                    // Full display - no insets subtracted
-                    Pair(bounds.width() and 1.inv(), bounds.height() and 1.inv())
-                }
-
-                DisplayMode.STATUS_BAR_HIDDEN -> {
-                    // Only subtract navigation bar (bottom), not status bar
-                    val insets =
-                        windowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                            android.view.WindowInsets.Type
-                                .navigationBars(),
-                        )
-                    val w = bounds.width() - insets.left - insets.right
-                    val h = bounds.height() - insets.bottom
-                    Pair(w and 1.inv(), h and 1.inv())
-                }
-
-                DisplayMode.NAV_BAR_HIDDEN -> {
-                    // Only subtract status bar (top), not navigation bar
-                    val insets =
-                        windowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                            android.view.WindowInsets.Type
-                                .statusBars(),
-                        )
-                    val w = bounds.width()
-                    val h = bounds.height() - insets.top
-                    Pair(w and 1.inv(), h and 1.inv())
-                }
-
-                DisplayMode.SYSTEM_UI_VISIBLE -> {
-                    // Subtract all system bar insets
-                    val insets =
-                        windowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                            android.view.WindowInsets.Type
-                                .systemBars() or
-                                android.view.WindowInsets.Type
-                                    .displayCutout(),
-                        )
-                    val w = bounds.width() - insets.left - insets.right
-                    val h = bounds.height() - insets.top - insets.bottom
-                    Pair(w and 1.inv(), h and 1.inv())
-                }
-            }
+        if (activity != null) {
+            DisplayBoundsProvider.usableEvenSize(activity, currentDisplayMode)
         } else {
             Pair(0, 0)
         }
@@ -217,7 +173,9 @@ fun AdapterConfigurationDialog(
     LaunchedEffect(savedFps) { selectedFps = savedFps }
     LaunchedEffect(savedHandDrive) { selectedHandDrive = savedHandDrive }
     LaunchedEffect(savedGpsForwarding) { selectedGpsForwarding = savedGpsForwarding }
-    LaunchedEffect(savedClusterNavigation) { selectedClusterNavigation = savedClusterNavigation }
+    LaunchedEffect(savedClusterNavigation, platformCapabilities.canToggleClusterSetting) {
+        selectedClusterNavigation = savedClusterNavigation && platformCapabilities.canToggleClusterSetting
+    }
 
     // Track if any changes were made
     // All adapter configuration changes require app restart
@@ -696,9 +654,15 @@ fun AdapterConfigurationDialog(
                             // Cluster Navigation Configuration
                             ConfigurationOptionCard(
                                 title = "Cluster Navigation",
-                                description = "Show CarPlay turn-by-turn on instrument cluster",
+                                description =
+                                    if (platformCapabilities.canToggleClusterSetting) {
+                                        "Show CarPlay turn-by-turn on instrument cluster"
+                                    } else {
+                                        "Unavailable on this build until a compatible cluster host is detected"
+                                    },
                                 icon = Icons.Default.Map,
                             ) {
+                                if (platformCapabilities.canToggleClusterSetting) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -729,6 +693,13 @@ fun AdapterConfigurationDialog(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colorScheme.primary,
                                 )
+                                } else {
+                                    Text(
+                                        text = platformCapabilities.clusterStatusMessage,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
 
                             // WiFi Band Configuration
